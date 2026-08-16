@@ -194,24 +194,17 @@ export default function Settings() {
       </section>
 
       <section className="mt-10">
-        <h2 className="display text-xl text-ink">Privacy</h2>
+        <h2 className="display text-xl text-ink">Privacy &amp; Data Security</h2>
         <Card className="mt-3 p-5">
-          <label className="flex items-start gap-3 text-sm">
-            <input
-              type="checkbox"
-              checked={store.offlineMode}
-              onChange={(e) => store.setOfflineMode(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="text-ink">Rules only, no network</span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-mute">
-                Classification normally falls back to a model for descriptions the rules cannot read. Only the
-                merchant name is sent, with digits and punctuation already stripped — never an amount, a date or
-                an account number. Turn this on and nothing leaves the device at all.
-              </span>
-            </span>
-          </label>
+          <div className="flex items-start gap-3 text-sm">
+            <div className="flex-1">
+              <span className="font-semibold text-ink">100% Local &amp; Private</span>
+              <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+                All calculations, classifications, fiqh rules, and financial figures run entirely on your device.
+                Your statements and figures are never uploaded, logged, or transmitted to any external AI or cloud servers.
+              </p>
+            </div>
+          </div>
         </Card>
       </section>
 
