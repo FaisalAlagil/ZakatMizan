@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { Check, RotateCcw, Sparkles, Upload } from 'lucide-react'
 import { MADHHABS, type Asset, type Madhhab } from '@/lib/types'
 import { MADHHAB_PROFILES } from '@/lib/fiqh/madhhab-profiles'
-import { parseCsv, toTransactions, type ColumnMap } from '@/lib/import/csv'
+import { extractBalancesFromCsv, parseCsv, toTransactions, type ColumnMap, type ExtractedBalances } from '@/lib/import/csv'
 import { useStore } from '@/lib/store'
 import { useZakat } from '@/lib/use-zakat'
 import { useHydrated } from '@/lib/use-hydrated'
@@ -55,15 +55,24 @@ export default function Setup() {
     const { rows, suggested } = parseCsv(text)
     if (suggested.description || suggested.amount || suggested.credit) {
       const txs = toTransactions(rows, suggested as ColumnMap, currency)
-      store.addTransactions(txs)
-      setImportStatus(`Imported ${txs.length} transactions from spreadsheet.`)
-
-      // Auto-populate net cash if not already entered
-      const netCash = txs.reduce((sum, t) => sum + t.amount, 0)
-      if (netCash > 0) {
-        setCash(netCash.toFixed(2))
+      const balances = extractBalancesFromCsv(
+        rows,
+        suggested as ColumnMap,
+        currency,
+        prices.goldPerGram,
+        prices.silverPerGram
+      )
+      store.replaceTransactions(txs)
+      if (balances.cash > 0) setCash(balances.cash.toFixed(2))
+      if (balances.goldGrams > 0) setGold(balances.goldGrams.toFixed(2))
+      if (balances.silverGrams > 0) setSilver(balances.silverGrams.toFixed(2))
+      if (balances.businessStock > 0) setBusiness(balances.businessStock.toFixed(2))
+      if (balances.investments > 0 || balances.savings > 0) {
+        setSavings((balances.investments + balances.savings).toFixed(2))
       }
+      if (balances.debts > 0) setDebt(balances.debts.toFixed(2))
 
+      setImportStatus(`Imported ${txs.length} transactions from spreadsheet.`)
       setStage('wizard')
       setIndex(0) // Go to Madhhab selection
     }
@@ -160,12 +169,36 @@ export default function Setup() {
     return (
       <SetupSpreadsheetImport
         currency={currency}
-        onImportComplete={({ transactions, netCash }) => {
-          store.addTransactions(transactions)
-          if (netCash > 0) {
-            setCash(netCash.toFixed(2))
+        goldPricePerGram={prices.goldPerGram}
+        silverPricePerGram={prices.silverPerGram}
+        onImportComplete={({ transactions, balances }) => {
+          // Replace existing transactions cleanly without stacking duplicates
+          store.replaceTransactions(transactions)
+
+          // Pre-populate all extracted asset balances
+          if (balances.cash > 0) setCash(balances.cash.toFixed(2))
+          if (balances.goldGrams > 0) setGold(balances.goldGrams.toFixed(2))
+          if (balances.silverGrams > 0) setSilver(balances.silverGrams.toFixed(2))
+          if (balances.businessStock > 0) setBusiness(balances.businessStock.toFixed(2))
+          if (balances.investments > 0 || balances.savings > 0) {
+            setSavings((balances.investments + balances.savings).toFixed(2))
           }
-          setImportStatus(`Imported ${transactions.length} transactions from spreadsheet.`)
+          if (balances.debts > 0) setDebt(balances.debts.toFixed(2))
+
+          const itemsFound: string[] = []
+          if (balances.cash > 0) itemsFound.push('Cash')
+          if (balances.goldGrams > 0) itemsFound.push('Gold')
+          if (balances.silverGrams > 0) itemsFound.push('Silver')
+          if (balances.investments > 0 || balances.savings > 0) itemsFound.push('Investments')
+          if (balances.businessStock > 0) itemsFound.push('Business')
+          if (balances.debts > 0) itemsFound.push('Debts')
+
+          const summaryMsg =
+            itemsFound.length > 0
+              ? `Imported ${transactions.length} transactions (${itemsFound.join(', ')} auto-filled).`
+              : `Imported ${transactions.length} transactions from spreadsheet.`
+
+          setImportStatus(summaryMsg)
           setStage('wizard')
           setIndex(0)
         }}

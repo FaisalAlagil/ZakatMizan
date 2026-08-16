@@ -6,11 +6,12 @@ import {
   ArrowRight,
   CheckCircle2,
   ChevronLeft,
+  Coins,
   FileSpreadsheet,
   RotateCcw,
   Upload,
 } from 'lucide-react'
-import { parseCsv, toTransactions, type ColumnMap } from '@/lib/import/csv'
+import { extractBalancesFromCsv, parseCsv, toTransactions, type ColumnMap, type ExtractedBalances } from '@/lib/import/csv'
 import type { Transaction, Verdict } from '@/lib/types'
 import { Card, VERDICT_META, money } from './ui'
 
@@ -26,10 +27,18 @@ export function SetupSpreadsheetImport({
   currency,
   onImportComplete,
   onBack,
+  goldPricePerGram = 176,
+  silverPricePerGram = 2.2,
 }: {
   currency: string
-  onImportComplete: (data: { transactions: Transaction[]; netCash: number; rawText: string }) => void
+  onImportComplete: (data: {
+    transactions: Transaction[]
+    balances: ExtractedBalances
+    rawText: string
+  }) => void
   onBack: () => void
+  goldPricePerGram?: number
+  silverPricePerGram?: number
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
@@ -37,7 +46,7 @@ export function SetupSpreadsheetImport({
   const [fileName, setFileName] = useState<string | null>(null)
   const [parsedData, setParsedData] = useState<{
     transactions: Transaction[]
-    netCash: number
+    balances: ExtractedBalances
     rawText: string
     rowCount: number
   } | null>(null)
@@ -60,18 +69,25 @@ export function SetupSpreadsheetImport({
       }
 
       const txs = toTransactions(rows, suggested as ColumnMap, currency)
-      if (txs.length === 0) {
-        setError('No valid transactions could be parsed from this file. Check that your CSV contains valid amounts.')
+      const balances = extractBalancesFromCsv(
+        rows,
+        suggested as ColumnMap,
+        currency,
+        goldPricePerGram,
+        silverPricePerGram
+      )
+
+      if (txs.length === 0 && balances.cash === 0 && balances.goldGrams === 0 && balances.investments === 0) {
+        setError('No valid data could be parsed from this file. Check that your CSV contains valid amounts.')
         return
       }
 
-      const netCash = txs.reduce((sum, t) => sum + t.amount, 0)
       setFileName(sourceName)
       setParsedData({
         transactions: txs,
-        netCash: Math.max(0, netCash),
+        balances,
         rawText: text,
-        rowCount: txs.length,
+        rowCount: txs.length || rows.length,
       })
     } catch {
       setError('An unexpected error occurred while parsing the CSV. Please ensure the file is in valid CSV format.')
@@ -115,7 +131,7 @@ export function SetupSpreadsheetImport({
     if (!parsedData) return
     onImportComplete({
       transactions: parsedData.transactions,
-      netCash: parsedData.netCash,
+      balances: parsedData.balances,
       rawText: parsedData.rawText,
     })
   }
@@ -123,7 +139,9 @@ export function SetupSpreadsheetImport({
   const incomeTxs = parsedData ? parsedData.transactions.filter((t) => t.amount > 0) : []
   const halalCount = incomeTxs.filter((t) => t.verdict === 'HALAL').length
   const flaggedCount = incomeTxs.filter((t) => t.verdict === 'HARAM' || t.verdict === 'MIXED').length
-  const needsReviewCount = incomeTxs.filter((t) => t.verdict === 'NEEDS_INFO' || t.verdict === 'UNCERTAIN' || !t.verdict).length
+  const needsReviewCount = incomeTxs.filter(
+    (t) => t.verdict === 'NEEDS_INFO' || t.verdict === 'UNCERTAIN' || !t.verdict
+  ).length
 
   return (
     <div className="flex min-h-dvh flex-col bg-canvas">
@@ -184,9 +202,7 @@ export function SetupSpreadsheetImport({
                 <p className="mt-4 text-base font-semibold text-ink">
                   Click to select or drag &amp; drop your CSV
                 </p>
-                <p className="mt-1 text-xs text-mute">
-                  Standard .CSV exports up to 10 MB
-                </p>
+                <p className="mt-1 text-xs text-mute">Standard .CSV exports up to 10 MB</p>
 
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-ink-soft">
                   <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">TD</span>
@@ -230,7 +246,9 @@ export function SetupSpreadsheetImport({
                   <CheckCircle2 size={20} className="text-halal" />
                   <div>
                     <p className="text-sm font-medium text-ink">Spreadsheet loaded successfully</p>
-                    <p className="text-xs text-mute">{fileName} • {parsedData.rowCount} transactions</p>
+                    <p className="text-xs text-mute">
+                      {fileName} • {parsedData.rowCount} transactions
+                    </p>
                   </div>
                 </div>
                 <button
@@ -242,20 +260,66 @@ export function SetupSpreadsheetImport({
               </div>
 
               {/* Metrics Card */}
-              <Card className="p-5">
+              <Card className="p-5 space-y-4">
                 <div className="flex items-baseline justify-between border-b border-hair pb-4">
                   <div>
                     <span className="eyebrow text-mute">Calculated Net Cash</span>
                     <p className="display mt-1 text-3xl font-medium text-ink">
-                      {money(parsedData.netCash, currency)}
+                      {money(parsedData.balances.cash, currency)}
                     </p>
                   </div>
                   <span className="rounded-full bg-halal/10 px-2.5 py-1 text-xs font-medium text-halal">
-                    Auto-fills Cash Step
+                    Auto-fills Setup Steps
                   </span>
                 </div>
 
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                {/* Additional Extracted Balances if present */}
+                {(parsedData.balances.goldGrams > 0 ||
+                  parsedData.balances.silverGrams > 0 ||
+                  parsedData.balances.investments > 0 ||
+                  parsedData.balances.savings > 0 ||
+                  parsedData.balances.businessStock > 0 ||
+                  parsedData.balances.debts > 0) && (
+                  <div className="rounded-xl bg-canvas p-3 border border-hair/80 text-xs space-y-1.5">
+                    <p className="font-semibold text-ink flex items-center gap-1.5">
+                      <Coins size={14} className="text-gold-ink" /> Extracted Asset Balances:
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-ink-soft pt-1">
+                      {parsedData.balances.goldGrams > 0 && (
+                        <div>
+                          Gold: <strong>{parsedData.balances.goldGrams.toFixed(2)}g</strong>
+                        </div>
+                      )}
+                      {parsedData.balances.silverGrams > 0 && (
+                        <div>
+                          Silver: <strong>{parsedData.balances.silverGrams.toFixed(2)}g</strong>
+                        </div>
+                      )}
+                      {parsedData.balances.investments > 0 && (
+                        <div>
+                          Investments: <strong>{money(parsedData.balances.investments, currency)}</strong>
+                        </div>
+                      )}
+                      {parsedData.balances.savings > 0 && (
+                        <div>
+                          Savings/RRSP: <strong>{money(parsedData.balances.savings, currency)}</strong>
+                        </div>
+                      )}
+                      {parsedData.balances.businessStock > 0 && (
+                        <div>
+                          Business Stock: <strong>{money(parsedData.balances.businessStock, currency)}</strong>
+                        </div>
+                      )}
+                      {parsedData.balances.debts > 0 && (
+                        <div>
+                          Debts Due: <strong>{money(parsedData.balances.debts, currency)}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
                     <p className="text-xs text-mute">Halal</p>
                     <p className="mt-0.5 text-base font-semibold text-halal">{halalCount}</p>
@@ -272,31 +336,37 @@ export function SetupSpreadsheetImport({
               </Card>
 
               {/* Preview Table */}
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-mute mb-2">
-                  Preview ({Math.min(4, parsedData.transactions.length)} of {parsedData.transactions.length} rows)
-                </p>
-                <div className="divide-y divide-hair rounded-xl border border-hair bg-paper overflow-hidden">
-                  {parsedData.transactions.slice(0, 4).map((tx) => (
-                    <div key={tx.id} className="flex items-center justify-between p-3 text-xs">
-                      <div className="max-w-[65%] truncate">
-                        <p className="font-medium text-ink truncate">{tx.description}</p>
-                        <p className="text-[11px] text-mute">{tx.date}</p>
+              {parsedData.transactions.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-mute mb-2">
+                    Preview ({Math.min(4, parsedData.transactions.length)} of {parsedData.transactions.length} rows)
+                  </p>
+                  <div className="divide-y divide-hair rounded-xl border border-hair bg-paper overflow-hidden">
+                    {parsedData.transactions.slice(0, 4).map((tx) => (
+                      <div key={tx.id} className="flex items-center justify-between p-3 text-xs">
+                        <div className="max-w-[65%] truncate">
+                          <p className="font-medium text-ink truncate">{tx.description}</p>
+                          <p className="text-[11px] text-mute">{tx.date}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`font-semibold ${tx.amount < 0 ? 'text-mute' : 'text-ink'}`}>
+                            {money(tx.amount, currency)}
+                          </p>
+                          {tx.verdict && (
+                            <span
+                              className={`text-[10px] ${
+                                VERDICT_META[tx.verdict as Verdict]?.color || 'text-mute'
+                              }`}
+                            >
+                              {VERDICT_META[tx.verdict as Verdict]?.label || tx.verdict}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className={`font-semibold ${tx.amount < 0 ? 'text-mute' : 'text-ink'}`}>
-                          {money(tx.amount, currency)}
-                        </p>
-                        {tx.verdict && (
-                          <span className={`text-[10px] ${VERDICT_META[tx.verdict as Verdict]?.color || 'text-mute'}`}>
-                            {VERDICT_META[tx.verdict as Verdict]?.label || tx.verdict}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>

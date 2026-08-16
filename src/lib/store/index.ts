@@ -91,7 +91,11 @@ export const useStore = create<State & Actions>()(
         set({ transactions: [...transactions, ...fresh] })
       },
 
-      replaceTransactions: (txs) => set({ transactions: txs }),
+      replaceTransactions: (txs) => {
+        const { learned } = get()
+        const fresh = txs.map((t) => classifyIfNeeded(t, learned))
+        set({ transactions: fresh })
+      },
 
       updateTransaction: (id, patch, options) => {
         const { transactions, learned } = get()
