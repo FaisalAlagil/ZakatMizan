@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Coins, FileCheck2, Scale, Settings, Wallet } from 'lucide-react'
+import { Coins, Scale, Settings, Wallet } from 'lucide-react'
 import { useStore } from '@/lib/store'
 import { useHydrated } from '@/lib/use-hydrated'
 import { needsAnswer } from '@/lib/classify/engine'
@@ -14,7 +14,6 @@ const LINKS = [
   { href: '/', label: 'Balance', icon: Scale },
   { href: '/income', label: 'Income', icon: Wallet },
   { href: '/zakat', label: 'Zakat', icon: Coins },
-  { href: '/submission', label: 'Submission', icon: FileCheck2 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
