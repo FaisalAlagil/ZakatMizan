@@ -8,10 +8,7 @@ import {
   calculatePureSilverGrams,
   GOLD_KARAT_FACTORS,
   SILVER_PURITY_FACTORS,
-  TOLA_TO_GRAMS,
-  TROY_OZ_TO_GRAMS,
   type GoldKarat,
-  type MetalUnit,
   type SilverPurity,
 } from '@/lib/fiqh/karats'
 
@@ -19,7 +16,6 @@ export type MetalItemEntry = {
   id: string
   label: string
   rawWeight: string
-  unit: MetalUnit
   karat: GoldKarat
   silverPurity: SilverPurity
 }
@@ -40,7 +36,6 @@ export function MetalAmountInput({
   nisabGrams?: number
 }) {
   const [mode, setMode] = useState<'simple' | 'breakdown'>('simple')
-  const [simpleUnit, setSimpleUnit] = useState<MetalUnit>('g')
   const [simpleKarat, setSimpleKarat] = useState<GoldKarat>('24K')
   const [simpleSilverPurity, setSimpleSilverPurity] = useState<SilverPurity>('999')
 
@@ -50,7 +45,6 @@ export function MetalAmountInput({
       id: 'item-1',
       label: metal === 'gold' ? 'Jewelry (e.g. Wedding Set)' : 'Silver Item 1',
       rawWeight: '',
-      unit: 'g',
       karat: '22K',
       silverPurity: '925',
     },
@@ -61,16 +55,13 @@ export function MetalAmountInput({
     const raw = Number.parseFloat(item.rawWeight) || 0
     if (raw <= 0) return 0
     return metal === 'gold'
-      ? calculatePureGoldGrams(raw, item.unit, item.karat)
-      : calculatePureSilverGrams(raw, item.unit, item.silverPurity)
+      ? calculatePureGoldGrams(raw, 'g', item.karat)
+      : calculatePureSilverGrams(raw, 'g', item.silverPurity)
   }
 
   function computeItemGrossGrams(item: MetalItemEntry): number {
     const raw = Number.parseFloat(item.rawWeight) || 0
-    if (raw <= 0) return 0
-    if (item.unit === 'oz') return raw * TROY_OZ_TO_GRAMS
-    if (item.unit === 'tola') return raw * TOLA_TO_GRAMS
-    return raw
+    return raw > 0 ? raw : 0
   }
 
   // Calculate totals
@@ -105,7 +96,6 @@ export function MetalAmountInput({
       id: `item-${Date.now()}`,
       label: metal === 'gold' ? `Gold Item ${nextIdx}` : `Silver Item ${nextIdx}`,
       rawWeight: '',
-      unit: 'g',
       karat: metal === 'gold' ? '21K' : '24K',
       silverPurity: '925',
     }
@@ -134,8 +124,8 @@ export function MetalAmountInput({
     const val = Number.parseFloat(cleaned) || 0
     const pureGrams =
       metal === 'gold'
-        ? calculatePureGoldGrams(val, simpleUnit, simpleKarat)
-        : calculatePureSilverGrams(val, simpleUnit, simpleSilverPurity)
+        ? calculatePureGoldGrams(val, 'g', simpleKarat)
+        : calculatePureSilverGrams(val, 'g', simpleSilverPurity)
 
     onChangeGrams(pureGrams > 0 ? pureGrams.toFixed(2).replace(/\.00$/, '') : '')
   }
@@ -149,7 +139,6 @@ export function MetalAmountInput({
   const numPureGrams = Number.parseFloat(grams) || 0
   const totalValue = numPureGrams * (pricePerGram || 0)
   const nisabValue = nisabGrams * (pricePerGram || 0)
-  const pricePerOz = pricePerGram * TROY_OZ_TO_GRAMS
   const metalLabel = metal === 'gold' ? 'Gold' : 'Silver'
 
   return (
@@ -166,12 +155,11 @@ export function MetalAmountInput({
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-ink">Live {metalLabel} Market Rate</span>
+              <span className="text-xs font-semibold text-ink">Live {metalLabel} Spot Price</span>
               <span className="flex size-2 rounded-full bg-halal animate-pulse" title="Live rate active" />
             </div>
             <p className="tnum mt-0.5 text-xs text-ink-soft">
               <strong className="text-ink font-semibold">{money(pricePerGram, currency, 2)}</strong> / gram
-              <span className="text-mute"> ({money(pricePerOz, currency, 0)} / troy oz)</span>
             </p>
           </div>
         </div>
@@ -211,83 +199,46 @@ export function MetalAmountInput({
         </div>
 
         <span className="text-[11px] text-mute">
-          {metal === 'gold' ? 'Karat purity adjusted' : 'Purity adjusted'}
+          {metal === 'gold' ? 'Karat purity adjusted' : 'Purity percentage'}
         </span>
       </div>
 
       {/* 3A. Simple Mode */}
       {mode === 'simple' ? (
         <div className="space-y-4">
-          {/* Karat & Unit Controls */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {/* Karat / Purity Picker */}
+          {/* Karat / Purity Selector */}
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-xs text-mute font-medium">Purity:</span>
             {metal === 'gold' ? (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-mute font-medium">Purity:</span>
-                <select
-                  value={simpleKarat}
-                  onChange={(e) => setSimpleKarat(e.target.value as GoldKarat)}
-                  aria-label="Gold Karat Purity"
-                  className="rounded-lg border border-hair bg-paper px-2.5 py-1 text-xs font-semibold text-ink shadow-sm outline-none focus:border-deep"
-                >
-                  {(Object.keys(GOLD_KARAT_FACTORS) as GoldKarat[]).map((k) => (
-                    <option key={k} value={k}>
-                      {k} ({GOLD_KARAT_FACTORS[k].purityPct}%)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <select
+                value={simpleKarat}
+                onChange={(e) => setSimpleKarat(e.target.value as GoldKarat)}
+                aria-label="Gold Karat Purity"
+                className="rounded-xl border border-hair bg-paper px-3 py-1.5 text-xs font-semibold text-ink shadow-sm outline-none focus:border-deep"
+              >
+                {(Object.keys(GOLD_KARAT_FACTORS) as GoldKarat[]).map((k) => (
+                  <option key={k} value={k}>
+                    {k} ({GOLD_KARAT_FACTORS[k].purityPct}%)
+                  </option>
+                ))}
+              </select>
             ) : (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-mute font-medium">Purity:</span>
-                <select
-                  value={simpleSilverPurity}
-                  onChange={(e) => setSimpleSilverPurity(e.target.value as SilverPurity)}
-                  aria-label="Silver Purity"
-                  className="rounded-lg border border-hair bg-paper px-2.5 py-1 text-xs font-semibold text-ink shadow-sm outline-none focus:border-deep"
-                >
-                  {(Object.keys(SILVER_PURITY_FACTORS) as SilverPurity[]).map((p) => (
-                    <option key={p} value={p}>
-                      {p} ({SILVER_PURITY_FACTORS[p].purityPct}%)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <select
+                value={simpleSilverPurity}
+                onChange={(e) => setSimpleSilverPurity(e.target.value as SilverPurity)}
+                aria-label="Silver Purity"
+                className="rounded-xl border border-hair bg-paper px-3 py-1.5 text-xs font-semibold text-ink shadow-sm outline-none focus:border-deep"
+              >
+                {(Object.keys(SILVER_PURITY_FACTORS) as SilverPurity[]).map((p) => (
+                  <option key={p} value={p}>
+                    {SILVER_PURITY_FACTORS[p].purityPct}% Purity ({p})
+                  </option>
+                ))}
+              </select>
             )}
-
-            {/* Unit Switcher */}
-            <div className="inline-flex rounded-xl bg-deep/[0.05] p-1 text-xs">
-              <button
-                type="button"
-                onClick={() => setSimpleUnit('g')}
-                className={`rounded-lg px-2.5 py-0.5 font-medium transition-all ${
-                  simpleUnit === 'g' ? 'bg-paper text-ink shadow-sm' : 'text-mute hover:text-ink'
-                }`}
-              >
-                Grams (g)
-              </button>
-              <button
-                type="button"
-                onClick={() => setSimpleUnit('oz')}
-                className={`rounded-lg px-2.5 py-0.5 font-medium transition-all ${
-                  simpleUnit === 'oz' ? 'bg-paper text-ink shadow-sm' : 'text-mute hover:text-ink'
-                }`}
-              >
-                Troy Oz
-              </button>
-              <button
-                type="button"
-                onClick={() => setSimpleUnit('tola')}
-                className={`rounded-lg px-2.5 py-0.5 font-medium transition-all ${
-                  simpleUnit === 'tola' ? 'bg-paper text-ink shadow-sm' : 'text-mute hover:text-ink'
-                }`}
-              >
-                Tolas
-              </button>
-            </div>
           </div>
 
-          {/* Main Input */}
+          {/* Main Grams Input */}
           <div className="flex items-baseline justify-center gap-2 border-b-2 border-hair pb-4 transition-colors focus-within:border-deep">
             <input
               autoFocus
@@ -295,13 +246,11 @@ export function MetalAmountInput({
               onChange={(e) => handleSimpleValueChange(e.target.value)}
               inputMode="decimal"
               placeholder="0"
-              aria-label={`${metalLabel} weight`}
+              aria-label={`${metalLabel} weight in grams`}
               size={Math.max(1, grams.length || 1)}
               className="tnum display w-auto bg-transparent p-0 text-center text-5xl leading-none text-ink outline-none placeholder:text-hair sm:text-6xl"
             />
-            <span className="shrink-0 text-xl font-medium text-mute">
-              {simpleUnit === 'g' ? `g` : simpleUnit === 'oz' ? `oz` : `tolas`}
-            </span>
+            <span className="shrink-0 text-xl font-medium text-mute">grams</span>
           </div>
 
           {/* Quick Adjustment Buttons */}
@@ -349,7 +298,7 @@ export function MetalAmountInput({
                     value={item.label}
                     onChange={(e) => updateItem(item.id, { label: e.target.value })}
                     placeholder={`Item ${idx + 1}`}
-                    className="text-xs font-semibold text-ink bg-transparent outline-none focus:underline w-full max-w-[65%]"
+                    className="text-xs font-semibold text-ink bg-transparent outline-none focus:underline w-full max-w-[70%] truncate"
                   />
                   <button
                     type="button"
@@ -362,8 +311,8 @@ export function MetalAmountInput({
                 </div>
 
                 <div className="grid grid-cols-12 gap-2 items-center">
-                  {/* Weight Input */}
-                  <div className="col-span-5 flex items-center border border-hair rounded-xl px-2.5 py-1.5 bg-canvas focus-within:border-deep">
+                  {/* Weight Input (Grams) */}
+                  <div className="col-span-6 flex items-center border border-hair rounded-xl px-2.5 py-1.5 bg-canvas focus-within:border-deep">
                     <input
                       type="text"
                       inputMode="decimal"
@@ -372,27 +321,14 @@ export function MetalAmountInput({
                         updateItem(item.id, { rawWeight: e.target.value.replace(/[^0-9.]/g, '') })
                       }
                       placeholder="0"
-                      aria-label={`${item.label} weight`}
+                      aria-label={`${item.label} weight in grams`}
                       className="tnum text-sm font-semibold text-ink bg-transparent outline-none w-full"
                     />
-                  </div>
-
-                  {/* Unit Selector */}
-                  <div className="col-span-3">
-                    <select
-                      value={item.unit}
-                      onChange={(e) => updateItem(item.id, { unit: e.target.value as MetalUnit })}
-                      aria-label={`${item.label} unit`}
-                      className="w-full rounded-xl border border-hair bg-paper px-2 py-1.5 text-xs text-ink outline-none"
-                    >
-                      <option value="g">Grams</option>
-                      <option value="oz">Troy Oz</option>
-                      <option value="tola">Tolas</option>
-                    </select>
+                    <span className="text-xs text-mute ml-1">g</span>
                   </div>
 
                   {/* Karat / Purity Selector */}
-                  <div className="col-span-4">
+                  <div className="col-span-6">
                     {metal === 'gold' ? (
                       <select
                         value={item.karat}
@@ -402,7 +338,7 @@ export function MetalAmountInput({
                       >
                         {(Object.keys(GOLD_KARAT_FACTORS) as GoldKarat[]).map((k) => (
                           <option key={k} value={k}>
-                            {k}
+                            {k} ({GOLD_KARAT_FACTORS[k].purityPct}%)
                           </option>
                         ))}
                       </select>
@@ -417,7 +353,7 @@ export function MetalAmountInput({
                       >
                         {(Object.keys(SILVER_PURITY_FACTORS) as SilverPurity[]).map((p) => (
                           <option key={p} value={p}>
-                            {p}
+                            {SILVER_PURITY_FACTORS[p].purityPct}% ({p})
                           </option>
                         ))}
                       </select>
@@ -428,7 +364,7 @@ export function MetalAmountInput({
                 {/* Sub-item pure calculated weight */}
                 {computeItemPureGrams(item) > 0 && (
                   <div className="flex items-center justify-between text-[11px] text-mute border-t border-hair/50 pt-1.5">
-                    <span>
+                    <span className="truncate max-w-[50%]">
                       Pure 24K: <strong>{computeItemPureGrams(item).toFixed(2)}g</strong>
                     </span>
                     <span className="font-medium text-ink">

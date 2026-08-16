@@ -274,14 +274,14 @@ export function SetupSpreadsheetImport({
                   <CheckCircle2 size={20} className="text-halal" />
                   <div>
                     <p className="text-sm font-medium text-ink">Spreadsheet loaded successfully</p>
-                    <p className="text-xs text-mute">
+                    <p className="text-xs text-mute truncate max-w-[260px] sm:max-w-md">
                       {fileName} • {parsedData.rowCount} rows across {parsedData.sheetNames.length} {parsedData.sheetNames.length === 1 ? 'sheet' : 'sheets'}
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setParsedData(null)}
-                  className="inline-flex items-center gap-1 text-xs text-ink-soft underline hover:text-ink"
+                  className="inline-flex items-center gap-1 text-xs text-ink-soft underline hover:text-ink shrink-0"
                 >
                   <RotateCcw size={12} /> Replace
                 </button>
@@ -291,16 +291,17 @@ export function SetupSpreadsheetImport({
               {parsedData.sheets.length > 1 && (
                 <div className="rounded-xl border border-hair bg-paper p-3 space-y-2">
                   <p className="text-xs font-medium text-ink flex items-center gap-1.5">
-                    <Layers size={13} className="text-gold-ink" /> Ingested Sheets ({parsedData.sheets.length}):
+                    <Layers size={13} className="text-gold-ink shrink-0" /> Ingested Sheets ({parsedData.sheets.length}):
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {parsedData.sheets.map((sh) => (
                       <span
                         key={sh.name}
-                        className="inline-flex items-center gap-1 rounded-lg bg-canvas border border-hair px-2.5 py-1 text-xs font-medium text-ink-soft"
+                        className="inline-flex items-center gap-1 rounded-lg bg-canvas border border-hair px-2.5 py-1 text-xs font-medium text-ink-soft max-w-full"
                       >
-                        <span className="size-1.5 rounded-full bg-halal" />
-                        {sh.name} <span className="text-mute">({sh.rows.length} rows)</span>
+                        <span className="size-1.5 rounded-full bg-halal shrink-0" />
+                        <span className="truncate max-w-[140px]">{sh.name}</span>
+                        <span className="text-mute shrink-0">({sh.rows.length} rows)</span>
                       </span>
                     ))}
                   </div>
