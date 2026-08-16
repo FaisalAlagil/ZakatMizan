@@ -19,6 +19,7 @@ import { SetupMethodChoice } from '@/components/setup-method-choice'
 import { SetupSpreadsheetImport } from '@/components/setup-spreadsheet-import'
 import { MadhhabInfoModal } from '@/components/madhhab-info-modal'
 import { MetalAmountInput } from '@/components/metal-amount-input'
+import { InvestmentScreeningInput } from '@/components/investment-screening-input'
 
 /**
  * Setup wizard supporting both guided step-by-step questions and spreadsheet import.
@@ -376,12 +377,12 @@ export default function Setup() {
         <StepShell
           {...shell}
           title="How much is in investments or savings?"
-          hint="A TFSA, an RRSP, shares or a pension. Only count what you could withdraw."
+          hint="TFSA, RRSP, shares, Shariah ETFs or index funds. Screen for Halal compliance and dividend purification."
           cta="Continue"
           ctaDisabled={!savings}
           secondary={skip(() => setSavings(''))}
         >
-          <BigAmount value={savings} onChange={setSavings} currency={currency} />
+          <InvestmentScreeningInput value={savings} onChangeValue={setSavings} currency={currency} />
         </StepShell>
       )
 

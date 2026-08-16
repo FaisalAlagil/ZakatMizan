@@ -1,5 +1,6 @@
 import Papa from 'papaparse'
-import type { Asset, Liability, Transaction, Verdict } from '@/lib/types'
+import * as XLSX from 'xlsx'
+import type { Transaction, Verdict } from '@/lib/types'
 import { REF } from '@/lib/fiqh/fiqh-references'
 
 export type ColumnMap = {
@@ -17,10 +18,18 @@ export type ColumnMap = {
   missingInfo?: string
 }
 
-export type ParsedCsv = {
+export type ParsedSheet = {
+  name: string
   headers: string[]
   rows: Record<string, string>[]
   suggested: Partial<ColumnMap>
+}
+
+export type ParsedWorkbook = {
+  sheets: ParsedSheet[]
+  allRows: Record<string, string>[]
+  sheetNames: string[]
+  totalRows: number
 }
 
 export type ExtractedBalances = {
@@ -31,29 +40,23 @@ export type ExtractedBalances = {
   savings: number
   businessStock: number
   debts: number
+  sheetContributions?: Record<string, { cash: number; goldGrams: number; investments: number }>
 }
 
 const MATCHERS: Record<keyof ColumnMap, RegExp> = {
   date: /^(date|transaction date|posted|posting date)$/i,
-  description: /^(description|details|memo|narrative|merchant_or_source|merchant|payee|transaction|parse_line|asset_name|name|item)$/i,
-  amount: /^(amount|amount_cad|amount_usd|value|sum|balance|total)$/i,
+  description: /^(description|details|memo|narrative|merchant_or_source|merchant|payee|transaction|parse_line|asset_name|name|item|holding|fund|ticker)$/i,
+  amount: /^(amount|amount_cad|amount_usd|value|sum|balance|total|market_value|current_value|val)$/i,
   credit: /^(credit|deposit|money in|paid in|inflow)$/i,
   debit: /^(debit|withdrawal|money out|paid out|outflow)$/i,
   direction: /^(direction|type|flow)$/i,
-  keyword: /^(keyword|category|trans_type|transaction_type|asset_type|kind)$/i,
-  mixedHalalPct: /^(mixed_halal_pct|halal_pct|halal_percent)$/i,
+  keyword: /^(keyword|category|trans_type|transaction_type|asset_type|asset_class|kind|type|shariah_status)$/i,
+  mixedHalalPct: /^(mixed_halal_pct|halal_pct|halal_percent|halal_ratio|purity_pct)$/i,
   haramPortionDisposed: /^(haram_portion_disposed|disposed|purified)$/i,
   missingInfo: /^(missing_information|missing_info|warning)$/i,
 }
 
-export function parseCsv(text: string): ParsedCsv {
-  const result = Papa.parse<Record<string, string>>(text.trim(), {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (h) => h.trim(),
-  })
-
-  const headers = result.meta.fields ?? []
+export function findSuggestedColumns(headers: string[]): Partial<ColumnMap> {
   const suggested: Partial<ColumnMap> = {}
 
   for (const key of Object.keys(MATCHERS) as (keyof ColumnMap)[]) {
@@ -62,16 +65,107 @@ export function parseCsv(text: string): ParsedCsv {
   }
 
   // Fall back to positional guesses so an unlabelled export still imports.
-  if (!suggested.description) suggested.description = headers.find((h) => /desc|detail|memo|merchant|keyword|item|name/i.test(h))
+  if (!suggested.description) suggested.description = headers.find((h) => /desc|detail|memo|merchant|keyword|item|name|holding/i.test(h))
   if (!suggested.date) suggested.date = headers.find((h) => /date/i.test(h))
-  if (!suggested.amount) suggested.amount = headers.find((h) => /amount|value|balance/i.test(h))
+  if (!suggested.amount) suggested.amount = headers.find((h) => /amount|value|balance|val|sum/i.test(h))
+
+  return suggested
+}
+
+/**
+ * Parses a single CSV string.
+ */
+export function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[]; suggested: Partial<ColumnMap> } {
+  const result = Papa.parse<Record<string, string>>(text.trim(), {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) => h.trim(),
+  })
+
+  const headers = result.meta.fields ?? []
+  const suggested = findSuggestedColumns(headers)
 
   return { headers, rows: result.data, suggested }
 }
 
+/**
+ * Parses an entire Excel workbook (.xlsx, .xls) or multi-sheet file.
+ * Ingests ALL sheets and returns aggregated rows with sheet metadata.
+ */
+export function parseWorkbook(data: ArrayBuffer | Uint8Array | string): ParsedWorkbook {
+  let wb: XLSX.WorkBook
+  try {
+    wb = XLSX.read(data, { type: typeof data === 'string' ? 'string' : 'array', raw: false })
+  } catch {
+    // If xlsx binary read fails on string, fall back to csv parser
+    if (typeof data === 'string') {
+      const csv = parseCsv(data)
+      return {
+        sheets: [{ name: 'Sheet1', headers: csv.headers, rows: csv.rows, suggested: csv.suggested }],
+        allRows: csv.rows,
+        sheetNames: ['Sheet1'],
+        totalRows: csv.rows.length,
+      }
+    }
+    throw new Error('Failed to read spreadsheet file.')
+  }
+
+  const sheets: ParsedSheet[] = []
+  const allRows: Record<string, string>[] = []
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName]
+    if (!ws) continue
+
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, {
+      raw: false,
+      defval: '',
+      header: 1, // Get array of arrays to find real header row
+    }) as unknown as (string | number)[][]
+
+    if (!rawRows || rawRows.length === 0) continue
+
+    // Find header row (first non-empty row)
+    const headerRowIdx = rawRows.findIndex((r) => r.some((cell) => cell !== undefined && String(cell).trim() !== ''))
+    if (headerRowIdx === -1) continue
+
+    const rawHeaderRow = rawRows[headerRowIdx] || []
+    const headers = rawHeaderRow.map((h, i) => (h ? String(h).trim() : `Column_${i + 1}`))
+
+    // Convert data rows into objects
+    const dataRows = rawRows.slice(headerRowIdx + 1)
+    const sheetRows: Record<string, string>[] = []
+
+    for (const dRow of dataRows) {
+      if (!dRow || !dRow.some((c) => c !== undefined && String(c).trim() !== '')) continue
+      const rowObj: Record<string, string> = { _sheetName: sheetName }
+      headers.forEach((h, colIdx) => {
+        rowObj[h] = dRow[colIdx] !== undefined ? String(dRow[colIdx]).trim() : ''
+      })
+      sheetRows.push(rowObj)
+      allRows.push(rowObj)
+    }
+
+    const suggested = findSuggestedColumns(headers)
+    sheets.push({
+      name: sheetName,
+      headers,
+      rows: sheetRows,
+      suggested,
+    })
+  }
+
+  return {
+    sheets,
+    allRows,
+    sheetNames: wb.SheetNames,
+    totalRows: allRows.length,
+  }
+}
+
 export function toNumber(raw: string | undefined): number {
   if (!raw) return 0
-  const cleaned = raw.replace(/[^0-9.\-()]/g, '')
+  const cleaned = String(raw).replace(/[^0-9.\-()]/g, '')
   const negative = /^\(.*\)$/.test(cleaned)
   const value = Number.parseFloat(cleaned.replace(/[()]/g, ''))
   if (Number.isNaN(value)) return 0
@@ -79,7 +173,7 @@ export function toNumber(raw: string | undefined): number {
 }
 
 /**
- * Extract weight in grams from text (e.g., "40g 22k gold", "50 grams", "2.5 oz")
+ * Extract weight in grams from text (e.g., "40g 22k gold", "50 grams", "2.5 oz", "2 tolas")
  */
 export function extractGramsFromText(text: string): number {
   const matchGrams = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:g|grams?)\b/i)
@@ -115,18 +209,30 @@ export function toTransactions(
         row.description ??
         row.merchant_or_source ??
         row.keyword ??
+        row.asset_name ??
+        row.name ??
+        row.item ??
         ''
       ).trim()
 
       if (!desc) return null
 
-      const keyword = (row[map.keyword ?? 'keyword'] ?? row.keyword ?? '').toLowerCase().trim()
+      const keyword = (
+        row[map.keyword ?? 'keyword'] ??
+        row.keyword ??
+        row.category ??
+        row.asset_type ??
+        ''
+      )
+        .toLowerCase()
+        .trim()
+
       const missingInfo = (row[map.missingInfo ?? 'missing_information'] ?? row.missing_information ?? '').trim()
-      const mixedHalalPctRaw = row[map.mixedHalalPct ?? 'mixed_halal_pct'] ?? row.mixed_halal_pct
+      const mixedHalalPctRaw = row[map.mixedHalalPct ?? 'mixed_halal_pct'] ?? row.mixed_halal_pct ?? row.halal_pct
       const disposedRaw = (row[map.haramPortionDisposed ?? 'haram_portion_disposed'] ?? row.haram_portion_disposed ?? '').toLowerCase().trim()
 
       const tx: Transaction = {
-        id: row.transaction_id || `csv-${index}-${Math.abs(rawAmount)}-${desc.slice(0, 12)}`,
+        id: row.transaction_id || `tx-${index}-${Math.abs(rawAmount)}-${desc.slice(0, 12)}`,
         date: row[map.date] ?? row.date ?? new Date().toISOString().slice(0, 10),
         description: desc,
         amount: rawAmount,
@@ -219,7 +325,7 @@ export function toTransactions(
 
 /**
  * Automatically extracts setup asset balances (Gold, Silver, Investments, RRSP, Business Stock, Debts, Cash)
- * from bank statements, balance sheets, and transaction spreadsheets.
+ * from bank statements, balance sheets, and multi-sheet transaction spreadsheets.
  */
 export function extractBalancesFromCsv(
   rows: Record<string, string>[],
@@ -236,14 +342,25 @@ export function extractBalancesFromCsv(
     savings: 0,
     businessStock: 0,
     debts: 0,
+    sheetContributions: {},
   }
 
   let regularCashSum = 0
 
   for (const row of rows) {
-    const rawVal = map.credit
-      ? toNumber(row[map.credit]) - toNumber(row[map.debit ?? ''])
-      : toNumber(row[map.amount ?? ''])
+    const rawVal =
+      map.credit && row[map.credit]
+        ? toNumber(row[map.credit]) - toNumber(row[map.debit ?? ''])
+        : toNumber(
+            (map.amount && row[map.amount]) ||
+              row.amount ||
+              row.market_value ||
+              row.value ||
+              row.balance ||
+              row.val ||
+              row.current_value ||
+              row.total
+          )
 
     const desc = (
       row[map.description] ??
@@ -253,8 +370,13 @@ export function extractBalancesFromCsv(
       row.asset_name ??
       row.name ??
       row.item ??
+      row.holding ??
+      row.fund ??
+      row.ticker ??
       ''
     ).trim()
+
+    const sheetName = (row._sheetName || '').toLowerCase()
 
     // Check if there are explicit columns like gold_grams, silver_grams, weight, grams
     const explicitGoldGrams = toNumber(row.gold_grams ?? row.gold_weight ?? row.gold_g)
@@ -286,10 +408,51 @@ export function extractBalancesFromCsv(
       .toLowerCase()
       .trim()
 
-    const text = `${desc} ${keyword}`.toLowerCase()
+    const text = `${desc} ${keyword} ${sheetName}`.toLowerCase()
     const absVal = Math.abs(rawVal)
 
-    // 1. Gold detection
+    // 1. Dedicated Sheet: Gold / Jewelry
+    if (sheetName.includes('gold') || sheetName.includes('jewelry') || sheetName.includes('bullion')) {
+      const parsedGrams = explicitGrams > 0 ? explicitGrams : extractGramsFromText(text)
+      if (parsedGrams > 0) {
+        result.goldGrams += parsedGrams
+      } else if (absVal > 0) {
+        result.goldGrams += absVal / (goldPricePerGram || 176)
+      }
+      continue
+    }
+
+    // 2. Dedicated Sheet: Silver
+    if (sheetName.includes('silver')) {
+      const parsedGrams = explicitGrams > 0 ? explicitGrams : extractGramsFromText(text)
+      if (parsedGrams > 0) {
+        result.silverGrams += parsedGrams
+      } else if (absVal > 0) {
+        result.silverGrams += absVal / (silverPricePerGram || 2.2)
+      }
+      continue
+    }
+
+    // 3. Dedicated Sheet: Investments / Stocks / Equities
+    if (sheetName.includes('invest') || sheetName.includes('stock') || sheetName.includes('equity') || sheetName.includes('portfolio')) {
+      result.investments += absVal > 0 ? absVal : 0
+      continue
+    }
+
+    // 4. Dedicated Sheet: Retirement / RRSP
+    if (sheetName.includes('rrsp') || sheetName.includes('retire') || sheetName.includes('pension')) {
+      result.savings += absVal > 0 ? absVal : 0
+      continue
+    }
+
+    // 5. Dedicated Sheet: Debts / Liabilities
+    if (sheetName.includes('debt') || sheetName.includes('liabilit') || sheetName.includes('loan')) {
+      result.debts += absVal > 0 ? absVal : 0
+      continue
+    }
+
+    // General text pattern matching across any sheet:
+    // Gold detection
     if (
       text.includes('gold') ||
       keyword.includes('gold') ||
@@ -306,13 +469,12 @@ export function extractBalancesFromCsv(
       if (parsedGrams > 0) {
         result.goldGrams += parsedGrams
       } else if (absVal > 0) {
-        // If denominated in dollars, convert to grams using gold price
         result.goldGrams += absVal / (goldPricePerGram || 176)
       }
       continue
     }
 
-    // 2. Silver detection
+    // Silver detection
     if (
       text.includes('silver') ||
       keyword.includes('silver') ||
@@ -329,7 +491,7 @@ export function extractBalancesFromCsv(
       continue
     }
 
-    // 3. Investments / Stocks / Equities / ETF
+    // Investments / Stocks / Equities / ETF
     if (
       keyword.includes('stock') ||
       keyword.includes('equity') ||
@@ -349,7 +511,7 @@ export function extractBalancesFromCsv(
       continue
     }
 
-    // 4. Retirement / RRSP / Pension / TFSA / 401k
+    // Retirement / RRSP / Pension / TFSA / 401k
     if (
       keyword.includes('rrsp') ||
       keyword.includes('retirement') ||
@@ -368,7 +530,7 @@ export function extractBalancesFromCsv(
       continue
     }
 
-    // 5. Business Stock / Merchandise Inventory
+    // Business Stock / Merchandise Inventory
     if (
       keyword.includes('inventory') ||
       keyword.includes('merchandise') ||
@@ -383,7 +545,7 @@ export function extractBalancesFromCsv(
       continue
     }
 
-    // 6. Debts / Loans / Overdue Liabilities
+    // Debts / Loans / Overdue Liabilities
     if (
       keyword.includes('debt') ||
       keyword.includes('loan') ||

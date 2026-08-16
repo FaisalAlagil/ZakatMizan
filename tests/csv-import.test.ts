@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { parseCsv, toTransactions, type ColumnMap } from '@/lib/import/csv'
+import * as XLSX from 'xlsx'
+import {
+  extractBalancesFromCsv,
+  parseCsv,
+  parseWorkbook,
+  toTransactions,
+  type ColumnMap,
+} from '@/lib/import/csv'
+import {
+  calculatePortfolioPurification,
+  screenInvestment,
+} from '@/lib/fiqh/investments'
 
 const SAMPLE_CSV = `person_name,transaction_id,date,keyword,amount_cad,direction,transaction_type,merchant_or_source,description,account,scope,status,mixed_halal_pct,haram_portion_disposed,cost_basis_cad,related_reference,missing_information,parse_line
 Nadia Rahman,NRR000157,2025-08-18,freelance_income,$202.70,inflow,income,Freelance Client,Freelance professional work payment,NR_CHQ_PERSONAL,personal,posted,,,,,,2025-08-18 | freelance_income | 202.70 | inflow | income | Freelance Client | Freelance professional work payment
@@ -65,5 +76,83 @@ describe('Hackathon CSV Import Dataset Parser', () => {
     const expense = txs.find((t) => t.id === 'NRR000034')
     expect(expense?.amount).toBe(-98.2)
     expect(expense?.verdict).toBeUndefined()
+  })
+
+  it('correctly ingests multi-sheet Excel workbooks with Gold and Investments on separate tabs', () => {
+    // Construct an in-memory multi-sheet workbook
+    const wb = XLSX.utils.book_new()
+
+    // Sheet 1: Transactions
+    const ws1 = XLSX.utils.json_to_sheet([
+      { date: '2025-01-01', description: 'Tech Salary Paycheque', amount: 5000, keyword: 'salary' },
+      { date: '2025-01-15', description: 'Bank Interest Credit', amount: 45, keyword: 'interest' },
+    ])
+    XLSX.utils.book_append_sheet(wb, ws1, 'Transactions')
+
+    // Sheet 2: Gold and Jewelry
+    const ws2 = XLSX.utils.json_to_sheet([
+      { item: 'Wedding Gold Bangles (22k)', weight_grams: 40, market_value: 7040 },
+      { item: 'Pure 24k Bullion Bar', weight_grams: 50, market_value: 8800 },
+    ])
+    XLSX.utils.book_append_sheet(wb, ws2, 'Gold & Jewelry')
+
+    // Sheet 3: Investments & Equities
+    const ws3 = XLSX.utils.json_to_sheet([
+      { holding: 'SP Funds S&P 500 Sharia ETF (SPUS)', market_value: 12000, type: 'investment' },
+      { holding: 'Apple Inc. (AAPL)', market_value: 6000, type: 'stocks' },
+    ])
+    XLSX.utils.book_append_sheet(wb, ws3, 'Investments')
+
+    // Write to binary buffer
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+
+    const { sheets, allRows, sheetNames } = parseWorkbook(buf)
+    expect(sheetNames).toEqual(['Transactions', 'Gold & Jewelry', 'Investments'])
+    expect(sheets.length).toBe(3)
+    expect(allRows.length).toBe(6)
+
+    const balances = extractBalancesFromCsv(allRows, sheets[0].suggested as ColumnMap, 'CAD')
+    expect(balances.cash).toBe(5045) // 5000 salary + 45 interest
+    expect(balances.goldGrams).toBeCloseTo(90, 1) // 40g + 50g from Sheet 2
+    expect(balances.investments).toBe(18000) // 12000 + 6000 from Sheet 3
+  })
+})
+
+describe('Investment Shariah Screening & Purification', () => {
+  it('screens SPUS and HLAL as 100% Halal compliant with 0% purification', () => {
+    const spus = screenInvestment('SPUS', 10000, 150)
+    expect(spus.shariahStatus).toBe('halal')
+    expect(spus.halalRatio).toBe(1.0)
+    expect(spus.purificationRatio).toBe(0.0)
+    expect(spus.purificationDue).toBe(0)
+  })
+
+  it('screens VOO and S&P 500 as mixed with exact 5% dividend purification requirement', () => {
+    const voo = screenInvestment('VOO', 20000, 400) // $400 annual dividend
+    expect(voo.shariahStatus).toBe('mixed')
+    expect(voo.halalRatio).toBe(0.95)
+    expect(voo.purificationRatio).toBe(0.05)
+    // 5% of $400 dividend = $20 purification due
+    expect(voo.purificationDue).toBe(20)
+  })
+
+  it('screens custom 96% Halal investment and computes exact 4% purification', () => {
+    const custom = screenInvestment('Custom Tech Fund', 50000, 1000)
+    custom.halalRatio = 0.96
+    custom.purificationRatio = 0.04
+    custom.purificationDue = 1000 * 0.04
+    expect(custom.purificationDue).toBe(40)
+
+    const portfolio = calculatePortfolioPurification([custom])
+    expect(portfolio.totalMarketValue).toBe(50000)
+    expect(portfolio.totalHalalValue).toBe(48000)
+    expect(portfolio.totalPurificationDue).toBe(40)
+  })
+
+  it('screens conventional bank stocks as 100% Haram requiring full disposal', () => {
+    const rbc = screenInvestment('Royal Bank of Canada (RY)', 5000, 200)
+    expect(rbc.shariahStatus).toBe('haram')
+    expect(rbc.halalRatio).toBe(0.0)
+    expect(rbc.purificationRatio).toBe(1.0)
   })
 })

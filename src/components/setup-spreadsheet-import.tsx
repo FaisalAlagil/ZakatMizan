@@ -8,10 +8,18 @@ import {
   ChevronLeft,
   Coins,
   FileSpreadsheet,
+  Layers,
   RotateCcw,
   Upload,
 } from 'lucide-react'
-import { extractBalancesFromCsv, parseCsv, toTransactions, type ColumnMap, type ExtractedBalances } from '@/lib/import/csv'
+import {
+  extractBalancesFromCsv,
+  parseWorkbook,
+  toTransactions,
+  type ColumnMap,
+  type ExtractedBalances,
+  type ParsedSheet,
+} from '@/lib/import/csv'
 import type { Transaction, Verdict } from '@/lib/types'
 import { Card, VERDICT_META, money } from './ui'
 
@@ -47,58 +55,75 @@ export function SetupSpreadsheetImport({
   const [parsedData, setParsedData] = useState<{
     transactions: Transaction[]
     balances: ExtractedBalances
+    sheets: ParsedSheet[]
+    sheetNames: string[]
     rawText: string
     rowCount: number
   } | null>(null)
 
-  function processCsvText(text: string, sourceName = 'bank_statement.csv') {
+  function processSpreadsheetData(data: ArrayBuffer | Uint8Array | string, sourceName = 'statement.xlsx') {
     setError(null)
     try {
-      const { rows, suggested, headers } = parseCsv(text)
+      const { sheets, allRows, sheetNames, totalRows } = parseWorkbook(data)
 
-      if (rows.length === 0) {
-        setError('The uploaded CSV file is empty. Please provide a file with transaction rows.')
+      if (totalRows === 0 || allRows.length === 0) {
+        setError('The uploaded workbook contains no data rows. Please provide a file with spreadsheet rows.')
         return
       }
 
-      if (!suggested.description && !suggested.amount && !suggested.credit) {
-        setError(
-          `Could not recognize transaction columns in this file. Found headers: ${headers.join(', ')}. Please ensure there is a Description and Amount/Credit column.`
-        )
-        return
+      // Extract transactions from each sheet using its specific column mapping
+      const allTransactions: Transaction[] = []
+      for (const sheet of sheets) {
+        const sheetTxs = toTransactions(sheet.rows, sheet.suggested as ColumnMap, currency)
+        allTransactions.push(...sheetTxs)
       }
 
-      const txs = toTransactions(rows, suggested as ColumnMap, currency)
+      // Extract asset balances across all rows and all sheets
+      const defaultMap = sheets[0]?.suggested as ColumnMap || {}
       const balances = extractBalancesFromCsv(
-        rows,
-        suggested as ColumnMap,
+        allRows,
+        defaultMap,
         currency,
         goldPricePerGram,
         silverPricePerGram
       )
 
-      if (txs.length === 0 && balances.cash === 0 && balances.goldGrams === 0 && balances.investments === 0) {
-        setError('No valid data could be parsed from this file. Check that your CSV contains valid amounts.')
+      if (
+        allTransactions.length === 0 &&
+        balances.cash === 0 &&
+        balances.goldGrams === 0 &&
+        balances.investments === 0 &&
+        balances.savings === 0
+      ) {
+        setError('Could not recognize financial columns in this file. Please ensure there is a Description and Amount/Value column.')
         return
       }
 
       setFileName(sourceName)
       setParsedData({
-        transactions: txs,
+        transactions: allTransactions,
         balances,
-        rawText: text,
-        rowCount: txs.length || rows.length,
+        sheets,
+        sheetNames,
+        rawText: typeof data === 'string' ? data : `[Excel Workbook: ${sourceName} (${sheets.length} sheets)]`,
+        rowCount: totalRows,
       })
     } catch {
-      setError('An unexpected error occurred while parsing the CSV. Please ensure the file is in valid CSV format.')
+      setError('An unexpected error occurred while parsing the spreadsheet file. Please check the file format (.xlsx, .xls, .csv).')
     }
   }
 
   async function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const text = await file.text()
-    processCsvText(text, file.name)
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+    if (isExcel) {
+      const buffer = await file.arrayBuffer()
+      processSpreadsheetData(buffer, file.name)
+    } else {
+      const text = await file.text()
+      processSpreadsheetData(text, file.name)
+    }
     e.target.value = ''
   }
 
@@ -118,13 +143,19 @@ export function SetupSpreadsheetImport({
     setDragActive(false)
     const file = e.dataTransfer.files?.[0]
     if (file) {
-      const text = await file.text()
-      processCsvText(text, file.name)
+      const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+      if (isExcel) {
+        const buffer = await file.arrayBuffer()
+        processSpreadsheetData(buffer, file.name)
+      } else {
+        const text = await file.text()
+        processSpreadsheetData(text, file.name)
+      }
     }
   }
 
   function loadSampleData() {
-    processCsvText(SAMPLE_CSV_DATA, 'sample_bank_statement.csv')
+    processSpreadsheetData(SAMPLE_CSV_DATA, 'sample_bank_statement.csv')
   }
 
   function handleProceed() {
@@ -154,22 +185,22 @@ export function SetupSpreadsheetImport({
         >
           <ChevronLeft size={22} />
         </button>
-        <span className="eyebrow text-gold-ink">Step 1 of 2 • Spreadsheet Import</span>
+        <span className="eyebrow text-gold-ink">Step 1 of 2 • Spreadsheet &amp; Excel Import</span>
       </header>
 
       {/* Main Content */}
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-5 pt-6 pb-28 sm:px-8">
         <div className="stagger">
           <p className="eyebrow flex items-center gap-1.5 text-mute">
-            <FileSpreadsheet size={14} className="text-gold-ink" /> Instant Data Import
+            <FileSpreadsheet size={14} className="text-gold-ink" /> Multi-Sheet Excel &amp; CSV Ingestion
           </p>
 
           <h1 className="display mt-2 text-[1.95rem] leading-[1.15] text-ink sm:text-3xl">
-            Import your transaction spreadsheet
+            Import your financial spreadsheet
           </h1>
 
           <p className="mt-2.5 text-[0.95rem] leading-relaxed text-ink-soft">
-            Upload your bank statement or CSV. We will calculate your cash balances and prepare income for Islamic purification checks.
+            Upload your multi-tab Excel (.xlsx) or CSV file. We will scan <strong>all sheets</strong> for Gold, Silver, Investments, and Cash.
           </p>
 
           {!parsedData ? (
@@ -190,7 +221,7 @@ export function SetupSpreadsheetImport({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv,text/csv,text/plain"
+                  accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   className="hidden"
                   onChange={handleFileInput}
                 />
@@ -200,18 +231,15 @@ export function SetupSpreadsheetImport({
                 </div>
 
                 <p className="mt-4 text-base font-semibold text-ink">
-                  Click to select or drag &amp; drop your CSV
+                  Click to select or drag &amp; drop Excel (.xlsx) or CSV
                 </p>
-                <p className="mt-1 text-xs text-mute">Standard .CSV exports up to 10 MB</p>
+                <p className="mt-1 text-xs text-mute">Supports multi-sheet workbooks up to 25 MB</p>
 
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-ink-soft">
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">TD</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">RBC</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">Scotiabank</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">CIBC</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">BMO</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">Chase</span>
-                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">Custom CSV</span>
+                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">Excel (.xlsx)</span>
+                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">CSV (.csv)</span>
+                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">All Worksheets</span>
+                  <span className="rounded-md bg-canvas px-2 py-0.5 border border-hair">Bank Exports</span>
                 </div>
               </div>
 
@@ -247,7 +275,7 @@ export function SetupSpreadsheetImport({
                   <div>
                     <p className="text-sm font-medium text-ink">Spreadsheet loaded successfully</p>
                     <p className="text-xs text-mute">
-                      {fileName} • {parsedData.rowCount} transactions
+                      {fileName} • {parsedData.rowCount} rows across {parsedData.sheetNames.length} {parsedData.sheetNames.length === 1 ? 'sheet' : 'sheets'}
                     </p>
                   </div>
                 </div>
@@ -258,6 +286,26 @@ export function SetupSpreadsheetImport({
                   <RotateCcw size={12} /> Replace
                 </button>
               </div>
+
+              {/* Sheets Breakdown Pills */}
+              {parsedData.sheets.length > 1 && (
+                <div className="rounded-xl border border-hair bg-paper p-3 space-y-2">
+                  <p className="text-xs font-medium text-ink flex items-center gap-1.5">
+                    <Layers size={13} className="text-gold-ink" /> Ingested Sheets ({parsedData.sheets.length}):
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {parsedData.sheets.map((sh) => (
+                      <span
+                        key={sh.name}
+                        className="inline-flex items-center gap-1 rounded-lg bg-canvas border border-hair px-2.5 py-1 text-xs font-medium text-ink-soft"
+                      >
+                        <span className="size-1.5 rounded-full bg-halal" />
+                        {sh.name} <span className="text-mute">({sh.rows.length} rows)</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Metrics Card */}
               <Card className="p-5 space-y-4">
@@ -273,7 +321,7 @@ export function SetupSpreadsheetImport({
                   </span>
                 </div>
 
-                {/* Additional Extracted Balances if present */}
+                {/* Extracted Asset Balances breakdown */}
                 {(parsedData.balances.goldGrams > 0 ||
                   parsedData.balances.silverGrams > 0 ||
                   parsedData.balances.investments > 0 ||
@@ -282,7 +330,7 @@ export function SetupSpreadsheetImport({
                   parsedData.balances.debts > 0) && (
                   <div className="rounded-xl bg-canvas p-3 border border-hair/80 text-xs space-y-1.5">
                     <p className="font-semibold text-ink flex items-center gap-1.5">
-                      <Coins size={14} className="text-gold-ink" /> Extracted Asset Balances:
+                      <Coins size={14} className="text-gold-ink" /> Extracted Asset Balances Across All Sheets:
                     </p>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-ink-soft pt-1">
                       {parsedData.balances.goldGrams > 0 && (
@@ -319,20 +367,22 @@ export function SetupSpreadsheetImport({
                   </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
-                    <p className="text-xs text-mute">Halal</p>
-                    <p className="mt-0.5 text-base font-semibold text-halal">{halalCount}</p>
+                {parsedData.transactions.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
+                      <p className="text-xs text-mute">Halal</p>
+                      <p className="mt-0.5 text-base font-semibold text-halal">{halalCount}</p>
+                    </div>
+                    <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
+                      <p className="text-xs text-mute">Purification</p>
+                      <p className="mt-0.5 text-base font-semibold text-haram">{flaggedCount}</p>
+                    </div>
+                    <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
+                      <p className="text-xs text-mute">Pending Review</p>
+                      <p className="mt-0.5 text-base font-semibold text-ink-soft">{needsReviewCount}</p>
+                    </div>
                   </div>
-                  <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
-                    <p className="text-xs text-mute">Purification</p>
-                    <p className="mt-0.5 text-base font-semibold text-haram">{flaggedCount}</p>
-                  </div>
-                  <div className="rounded-xl bg-canvas p-2.5 border border-hair/60">
-                    <p className="text-xs text-mute">Pending Review</p>
-                    <p className="mt-0.5 text-base font-semibold text-ink-soft">{needsReviewCount}</p>
-                  </div>
-                </div>
+                )}
               </Card>
 
               {/* Preview Table */}
