@@ -250,12 +250,42 @@ export function extractBalancesFromCsv(
       row.description ??
       row.merchant_or_source ??
       row.keyword ??
+      row.asset_name ??
+      row.name ??
+      row.item ??
       ''
     ).trim()
 
-    if (!desc && rawVal === 0) continue
+    // Check if there are explicit columns like gold_grams, silver_grams, weight, grams
+    const explicitGoldGrams = toNumber(row.gold_grams ?? row.gold_weight ?? row.gold_g)
+    const explicitSilverGrams = toNumber(row.silver_grams ?? row.silver_weight ?? row.silver_g)
+    const explicitGrams = toNumber(row.grams ?? row.weight_grams ?? row.weight)
 
-    const keyword = (row[map.keyword ?? 'keyword'] ?? row.keyword ?? '').toLowerCase().trim()
+    if (explicitGoldGrams > 0) {
+      result.goldGrams += explicitGoldGrams
+      continue
+    }
+
+    if (explicitSilverGrams > 0) {
+      result.silverGrams += explicitSilverGrams
+      continue
+    }
+
+    if (!desc && rawVal === 0 && explicitGrams === 0) continue
+
+    const keyword = (
+      row[map.keyword ?? 'keyword'] ??
+      row.keyword ??
+      row.category ??
+      row.asset_type ??
+      row.asset_class ??
+      row.kind ??
+      row.type ??
+      ''
+    )
+      .toLowerCase()
+      .trim()
+
     const text = `${desc} ${keyword}`.toLowerCase()
     const absVal = Math.abs(rawVal)
 
@@ -265,21 +295,32 @@ export function extractBalancesFromCsv(
       keyword.includes('gold') ||
       keyword.includes('jewelry') ||
       text.includes('mithqal') ||
-      text.includes('bullion bar')
+      text.includes('bullion bar') ||
+      text.includes('dinar') ||
+      text.includes('24k') ||
+      text.includes('22k') ||
+      text.includes('21k') ||
+      text.includes('18k')
     ) {
-      const parsedGrams = extractGramsFromText(text)
+      const parsedGrams = explicitGrams > 0 ? explicitGrams : extractGramsFromText(text)
       if (parsedGrams > 0) {
         result.goldGrams += parsedGrams
       } else if (absVal > 0) {
-        // If denominated in dollars, convert to grams using live gold price
+        // If denominated in dollars, convert to grams using gold price
         result.goldGrams += absVal / (goldPricePerGram || 176)
       }
       continue
     }
 
     // 2. Silver detection
-    if (text.includes('silver') || keyword.includes('silver') || text.includes('dirham')) {
-      const parsedGrams = extractGramsFromText(text)
+    if (
+      text.includes('silver') ||
+      keyword.includes('silver') ||
+      text.includes('dirham') ||
+      text.includes('sterling') ||
+      text.includes('925 silver')
+    ) {
+      const parsedGrams = explicitGrams > 0 ? explicitGrams : extractGramsFromText(text)
       if (parsedGrams > 0) {
         result.silverGrams += parsedGrams
       } else if (absVal > 0) {
@@ -294,11 +335,15 @@ export function extractBalancesFromCsv(
       keyword.includes('equity') ||
       keyword.includes('etf') ||
       keyword.includes('investment') ||
+      keyword.includes('shares') ||
       text.includes('etf') ||
       text.includes('shares') ||
       text.includes('brokerage') ||
       text.includes('mutual fund') ||
-      text.includes('equities')
+      text.includes('equities') ||
+      text.includes('spus') ||
+      text.includes('hlal') ||
+      text.includes('portfolio')
     ) {
       result.investments += absVal
       continue
@@ -309,6 +354,9 @@ export function extractBalancesFromCsv(
       keyword.includes('rrsp') ||
       keyword.includes('retirement') ||
       keyword.includes('pension') ||
+      keyword.includes('tfsa') ||
+      keyword.includes('401k') ||
+      keyword.includes('ira') ||
       text.includes('rrsp') ||
       text.includes('tfsa') ||
       text.includes('pension') ||
@@ -325,9 +373,11 @@ export function extractBalancesFromCsv(
       keyword.includes('inventory') ||
       keyword.includes('merchandise') ||
       keyword.includes('trade_goods') ||
+      keyword.includes('stock_in_trade') ||
       text.includes('inventory') ||
       text.includes('goods for resale') ||
-      text.includes('stock for sale')
+      text.includes('stock for sale') ||
+      text.includes('merchandise')
     ) {
       result.businessStock += absVal
       continue
@@ -338,11 +388,13 @@ export function extractBalancesFromCsv(
       keyword.includes('debt') ||
       keyword.includes('loan') ||
       keyword.includes('liability') ||
+      keyword.includes('payable') ||
       text.includes('loan payment') ||
       text.includes('car loan') ||
       text.includes('credit card balance') ||
       text.includes('mortgage instalment') ||
-      text.includes('payable')
+      text.includes('payable') ||
+      text.includes('line of credit')
     ) {
       result.debts += absVal
       continue
