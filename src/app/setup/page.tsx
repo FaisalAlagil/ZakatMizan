@@ -20,6 +20,7 @@ import { SetupSpreadsheetImport } from '@/components/setup-spreadsheet-import'
 import { MadhhabInfoModal } from '@/components/madhhab-info-modal'
 import { MetalAmountInput } from '@/components/metal-amount-input'
 import { InvestmentScreeningInput } from '@/components/investment-screening-input'
+import { BusinessStockInput } from '@/components/business-stock-input'
 
 /**
  * Setup wizard supporting both guided step-by-step questions and spreadsheet import.
@@ -327,6 +328,7 @@ export default function Setup() {
           secondary={skip(() => setGold(''))}
         >
           <MetalAmountInput
+            key="gold-input"
             metal="gold"
             grams={gold}
             onChangeGrams={setGold}
@@ -348,6 +350,7 @@ export default function Setup() {
           secondary={skip(() => setSilver(''))}
         >
           <MetalAmountInput
+            key="silver-input"
             metal="silver"
             grams={silver}
             onChangeGrams={setSilver}
@@ -363,12 +366,12 @@ export default function Setup() {
         <StepShell
           {...shell}
           title="What is your business stock worth?"
-          hint="Goods you bought to resell, valued at what you could sell them for today."
+          hint="Goods, inventory, merchandise, or raw materials for resale, valued at current market resale price."
           cta="Continue"
           ctaDisabled={!business}
           secondary={skip(() => setBusiness(''))}
         >
-          <BigAmount value={business} onChange={setBusiness} currency={currency} />
+          <BusinessStockInput key="business-input" value={business} onChangeValue={setBusiness} currency={currency} />
         </StepShell>
       )
 
@@ -382,7 +385,7 @@ export default function Setup() {
           ctaDisabled={!savings}
           secondary={skip(() => setSavings(''))}
         >
-          <InvestmentScreeningInput value={savings} onChangeValue={setSavings} currency={currency} />
+          <InvestmentScreeningInput key="savings-input" value={savings} onChangeValue={setSavings} currency={currency} />
         </StepShell>
       )
 
